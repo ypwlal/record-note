@@ -11,6 +11,8 @@
 
 * 源码基于 react-native ^0.57.8
 
+* **[custom helloworld](./android-helloworld.md)** 
+
 ## 传送门
 * [从第一句命令说起 ——local-cli](#从第一句命令说起-local-cli)
 * [JSBundle与Metro ——构建js代码](#jsbundle与metro-构建js代码)
