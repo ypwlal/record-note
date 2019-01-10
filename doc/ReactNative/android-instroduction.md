@@ -12,22 +12,22 @@
 * 源码基于 react-native ^0.57.8
 
 ## 传送门
-* [从第一句命令说起  ——local-cli](#从第一句命令说起-——local-cli)
-* [JSBundle与Metro ——构建js代码](#JSBundle与Metro-——构建js代码)
-* [JNI与So ——跨端交互的途径](#JNI与So-——跨端交互的途径)
-* [JS VM ——不仅只有一种](#JS-VM-——不仅只有一种)
-* [启动流程 ——老生常谈以及RN上下文的关系](#启动流程-——老生常谈以及RN上下文的关系)
+* [从第一句命令说起 ——local-cli](#从第一句命令说起-local-cli)
+* [JSBundle与Metro ——构建js代码](#jsbundle与metro-构建js代码)
+* [JNI与So ——跨端交互的途径](#jni与so--跨端交互的途径)
+* [JS VM ——不仅只有一种](#js-vm-不仅只有一种)
+* [启动流程 ——老生常谈以及RN上下文的关系](#启动流程-老生常谈以及rn上下文的关系)
 * [线程管理](#线程管理)
-* [Native Modules ——通信的入口](#Native-Modules-——通信的入口)
-    * [js与native的通信范式 ——它们是这么用的](#js与native的通信范式-——它们是这么用的)
-    * [配置表(config/registry)](#配置表(config/registry))
-    * [Package NativeModule与ViewManager ——添加自定义的方法和组件](#Package-NativeModule与ViewManager-——添加自定义的方法和组件)
+* [Native Modules ——通信的入口](#native-modules-通信的入口)
+    * [js与native的通信范式 ——它们是这么用的](#js与native的通信范式-它们是这么用的)
+    * [配置表(config/registry)](#配置表configregistry)
+    * [Package NativeModule与ViewManager ——添加自定义的方法和组件](#package-nativemodule与viewmanager-添加自定义的方法和组件)
     * [注解](#注解)
-* [Bridge ——跨端通信的底层](#Bridge-——跨端通信的底层)
-    * [跨端的数据交互 ——数据特殊的保存技巧](#跨端的数据交互-——数据特殊的保存技巧)
+* [Bridge ——跨端通信的底层](#bridge-跨端通信的底层)
+    * [跨端的数据交互 ——数据特殊的保存技巧](#跨端的数据交互-数据特殊的保存技巧)
     * [两端方法调用](#两端方法调用)
-* [View的渲染 ——react的view是如何对应到native的控件](#View的渲染-——react的view是如何对应到native的控件)
-* [Layout与Yoga ——style是怎么应用到native中的](#Layout与Yoga-——style是怎么应用到native中的)
+* [View的渲染 ——react的view是如何对应到native的控件](#view的渲染-react的view是如何对应到native的控件)
+* [Layout与Yoga ——style是怎么应用到native中的](#layout与yoga-style是怎么应用到native中的)
 
 ## 从第一句命令说起 ——local-cli
 
@@ -329,7 +329,7 @@ NativeModuleRegistry nativeModuleRegistry = processPackages(...);
     * 传递到c++ bridge： `CatalystInstanceImpl`
 
 <details>
-<summary>code</summary>
+<summary>Code</summary>
 
 ```
 // ReactInstanceManager.java 生成
@@ -358,7 +358,7 @@ initializeBridge(
         * e.g. `NativeModules.UIManager`(js) -> `nativeModuleProxy.UIManager` -> `getNativeModule`(c++) -> `genModule`(js)
     * 在debug模式下，通过`global.__fbBatchedBridgeConfig` 直接把配置表注入到js runtime
 
-code
+Code
 ```
 // 设置全局变量
 // debug模式 ReactAndroid/src/main/jni/react/jni/ProxyExecutor.cpp
@@ -443,7 +443,7 @@ public class MainApplication extends Application implements ReactApplication {
 ReactAndroid通过注解来标识可供js调用的方法，并用JavaMethodWrapper封装暴露到配置表中
 
 <details>
-<summary>demo code</summary>
+<summary>Demo Code</summary>
 
 ```
 @ReactMethod
@@ -472,7 +472,7 @@ private void findMethods() {
 * CatalystInstanceImpl.java
     * native代码通过它初始化bridge，封装各种jni方法与底层沟通。
 * CatalystInstanceImpl.cpp
-    * 初始化naiveToJsBridge与JsToNativeBridge，js引擎与native通过它做数据传输和方法调用。
+    * 初始化naiveToJsBridge与JsToNativeBridge，js引擎与native通过它做数据传输和方法调用。
 ### 跨端的数据交互 ——数据特殊的保存技巧
 跨端的数据结构是有讲究的。
 
@@ -518,7 +518,7 @@ public class WritableNativeMap extends ReadableNativeMap implements WritableMap 
 * C++创建数据同理。
 
 <details>
-<summary>source code<summary>
+<summary>Source Code<summary>
 
 > // Hybrid.h/Hybrid.cpp NativeArray/NativeMap部分调用链
 >
@@ -599,7 +599,7 @@ methodID: number  // e.g. 2 for createView, 18 for setChild
 params: array // e.g. [reactTag, viewName, rootTag, props]
 ```
 <details>
-<summary>sample</summary>
+<summary>Sample</summary>
 
 e.g. UIManager.createView产生如下call
 ```
@@ -635,7 +635,7 @@ public class UIImplementation {
 [..待续]
 
 <details>
-<summary>code</summary>
+<summary>Code</summary>
 
 * `ReactShadowNodeImpl.java`
 </details>
