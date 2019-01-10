@@ -39,34 +39,27 @@
 
 ### npm start(`react-native start`)
 
-开启一个Metro的服务器，提供bundlejs和sourcemap。
+开启一个Metro的服务器，通过网络向app提供bundlejs和sourcemap，作用于webpack类似。
+
+比如经常终端看到来自app的bundle请求
 ```
-// local-cli/server/runServer
-const serverInstance = await Metro.runServer(config, {
-    host: args.host,
-    secure: args.https,
-    secureCert: args.cert,
-    secureKey: args.key,
-    hmrEnabled: true,
-  });
+"GET /index.delta?platform=android&dev=true&minify=false HTTP/1.1" 200 - "-" "okhttp/3.11.0"
 ```
+
 
 ### react-native run-android
-开启一个Metro服务器，并在设备中构建运行app(依赖adb cli)
+开启一个Metro服务器，并在设备中构建运行app(依赖 **adb** cli)
 
-runAndroid
-* 判断server是否启动并开始构建
-* 在设备中运行 runOnDevices(all/spec)
-    * gradlew构建apk：`exec gradle with gradlew(.bat)`
-        * `gradle build -x lint` 构建
-        * `gradlew installDebug` 远程构建+安装
-        * `adb -s shell install` 安装apk
-        * `adb -s shell am start` 打开
-    * tryRunAdbReverse
-    * 打开指定activity：`tryLaunchAppOnDevice`
-        * `adb -s {device} shell am start -n {packageNameWithSuffix}/{packageName}.{mainActivity}`
-            * `packageName` 源于`AndroidManifest.xml/package`
-            * e.g. 在找到的设备中打开app并打开MainActivity `adb -s 1ae5f87006037ece shell am start -n com.testrn/com.testrn.MainActivity` 
+用于构建的cli命令：
+* gradlew构建apk：`exec gradle with gradlew(.bat)`
+* `gradle build -x lint` 构建
+* `gradlew installDebug` 远程构建+安装
+* `adb -s shell install` 安装apk
+* `adb -s shell am start` 打开
+
+打开app的cli命令：
+* 打开指定activity：`adb -s {device} shell am start -n {packageNameWithSuffix}/{packageName}.{mainActivity}`
+* e.g. 在找到的设备中打开app并打开MainActivity `adb -s 1ae5f87006037ece shell am start -n com.testrn/com.testrn.MainActivity` 
 
 <details>
 <summary>配置local-cli</summary>
@@ -98,9 +91,12 @@ const Config = {
 ### JSBundle
 JSBundle文件，本质是一个js文件，它会被加载并运行在js vm中。
 
-打包出来的文件跟web开发的webpack等工具构建出来的内容相似，同样是一套module体系的pofill
+打包出来的文件跟web开发的webpack等工具构建出来的内容相似，同样是一套module体系的polyfill
 
+它的结构类似如下：
 ```
+// index.bundle.js
+_d(function(...){..},1,[...])
 _d(factory, moduleId, dependencyMap) // 定义
 _r(moduleId) // reqeuire执行
 ```
@@ -115,30 +111,36 @@ _r(moduleId) // reqeuire执行
 甚至，还可以把整个metro替换成自定义的打包器。
 
 ## JNI与So  ——跨端交互的途径
-JNI(Java Native Interface)是java与其他语言体系代码通信的接口实现。
+ReactNative的跨Java，c/c++，js的应用框架，其中JNI是java与c/c++的通信的关键途径。
+
+**JNI(Java Native Interface)** 是java与其他语言体系代码通信的接口实现。
 * java调用其他语言的意义
     * 跨平台代码调用，性能优势(见仁见智)
     * 可以利用更多的代码/开源资源，毕竟有些好的实现不一定有java的方案
-* 在ReactAndroid的代码中常见的`private native void`，都是jni的调用
+* 在ReactAndroid的代码中常见的`private native void xxMethod(...) {...}`，都是jni的调用，意思是这个方法最后会通过c/c++来执行
+
 * 调试编译
     * 在ReactNative中，采用的是ndk-build的方式编译。
     * 在Android Studio上支持的是cmake的调试，暂时未找到支持ReactNative c++源码的断点方案，或许可以走ndk-gdb的方案？
 
-* so loader
+* 加载so文件
+    * 经过编译之后，c/c++端的代码会被编译成so文件。
     * java默认支持的加载so库的方式是`System.load`，`System.loadLibrary`
-    * facebook有自己的一套加载方案`SoLoader`，已开源，并在代码中普遍使用。
+    * facebook有自己的一套加载方案`SoLoader`，在代码中普遍使用。
 
-* 源码的对应关系
+* c++/java源码的对应关系
     * c++代码中充满了`static constexpr auto kJavaDescriptor`的声明，它们的值就是对应的java代码位置，如`static constexpr auto kJavaDescriptor = "Lcom/facebook/react/bridge/CatalystInstanceImpl;`(仅对wrapper类)
 
 [试试编写自己的jni NativeModules](./android-helloworld.md#custom-method-from-cxx)
 
 ## JS VM ——不仅只有一种
-react-native中js的运行环境大多数情况是JavaScriptCore，在ios中使用的是系统的runtime，在安卓中使用的是fb的一份JSC。
+
+ReactNativeAndroid会根据不同的手机平台和是否debug模式选择对应的js runtime。
+
+react-native中js runtime大多数情况是JavaScriptCore，在ios中使用的是系统的JavaScriptCore，在安卓中使用的是fb的编译的另一份JavaScriptCore。
 
 除此之外，在debug remote状态下，会通过 **websocket** 使用debugger tools的runtime(一般是chrome的V8)，这也是我们可以在debugger tools上调试的原因。
 
-ReactNativeAndroid在创建createReactContext时会根据是否debug模式创建对应的excutor(此处会连接c++)。
 
 > 不同场景注入给js的nativeModules配置表实现也是不一样的
 
@@ -153,6 +155,18 @@ ReactNativeAndroid在创建createReactContext时会根据是否debug模式创建
 </details>
 
 ## 启动流程 ——老生常谈以及RN上下文的关系
+
+### ReactAndroid重要概念
+|Name|Describe|
+|-:|-:|
+|Application|Android的一个系统组件，一般一个apk只会有一个Application|
+|Activity||
+|ReactRootHost|与Application绑定，用于管理ReactInstanceManager|
+|ReactInstanceManager|与Application绑定，用于管理CatalystInstance|
+|ReactPackage||
+|ReactRootView||
+|reactContext||
+|CatalystInstance||
 
 ### 常见疑问：
 1. 在业务开发过程中遇到的rn共享global code是什么机制？
@@ -199,15 +213,15 @@ ReactNativeAndroid在创建createReactContext时会根据是否debug模式创建
 
     2.3.2 构造跨端通信实例`CatalystInstanceImpl`，初始化bridge
 
-        * 此时创建js线程与nativeModules线程
-        * 在js线程上初始化js与native的bridge，启动js VM
+    * 此时创建两条重要的线程：js线程与nativeModules线程
+    * 在js线程上初始化js与native的bridge，启动js VM
         
     2.3.3 加载JSBundle，并运行js代码
 
     2.3.4 把react上下文绑定到该rootView
 
-        * 生成rootView的rootTag用于标识
-        * 从native端执行`runApplication`，交由js端接管view的render开始
+    * 生成rootTag用于标识rootView
+    * 从native端执行`runApplication`，驱动js端的render
 
 ## 线程管理
     众所周知，reac-native应用是多线程的。
@@ -220,7 +234,7 @@ ReactNativeAndroid在创建createReactContext时会根据是否debug模式创建
 * OkHttp Dispatcher(http)
 * 代码中的一些匿名线程, 如创建reactContext时的新线程
 * 辅助线程
-    * 进程间通信：binder 
+    * 线程间通信：binder 
     * 解析守护线程(用于GC)：FinalizerDaemon, FinalizerWatchdogDaemon
     * GC：HeapTaskDeamon
     * 即时编译优化：Jit thread pool worker thread
@@ -229,29 +243,29 @@ ReactNativeAndroid在创建createReactContext时会根据是否debug模式创建
     * and so on...
 
 ### 线程的创建及负责的内容
-* UI线程在android应用启动时默认创建
-* 创建reactContext时会创建一个匿名线程，用于`runCreateReactContextOnNewThread`
-* createReactContext时，在初始化bridge前，依次创建 **jsThread** 与 **nativeModulesThread** 作为后台进程。(分别命名mqt_js, mqt_native_modules)
-    * nativeModulesThread：后续会执行启动reactContext的任务`setupReactContext`, 设置rootView，执行js中的`runApplication`
-    * jsThread：被c++用于初始化bridge，构建js引擎环境, runJSBundle，执行js代码
+* UI线程：在android应用启动时默认创建
+* 构造react上下文的线程，`runCreateReactContextOnNewThread`
+* 构造react上下文，在初始化bridge前，依次创建 **js线程** 与 **nativeModules线程** 作为后台线程。(分别命名mqt_js, mqt_native_modules)
+    * nativeModules线程：负责在构建完react的上下文后, 设置rootView，执行js中的`runApplication`等
+    * js线程：被c++用于初始化bridge，构建js引擎环境, runJSBundle，执行js代码等
 
 <details>
 <summary>核心代码</summary>
 
-* 创建createReactContext：`ReactInstanceManager`
+* 创建react上下文 createReactContext：`ReactInstanceManager`
 * 初始化bridge, 创建线程：`CatalystInstanceImpl`, `ReactQueueConfigurationImpl`
 * 通过`ReactContext`获取对应线程，一般是获取js和nativeModules，通过`UiThreadUtil`获取ui线程
-    * reactContext.runOnJSQueueThread
-    * reactContext.runOnNativeModulesQueueThread
-    * UiThreadUtil.runOnUiThread
+    * `reactContext.runOnJSQueueThread`
+    * `reactContext.runOnNativeModulesQueueThread`
+    * `UiThreadUtil.runOnUiThread`
 </details>
 
 ### 线程的销毁
-* 时机：线程跟随`ReactInstanceManager`, `CatalystInstance`被销毁
+* 时机：线程跟随react(java)的实例被销毁
 * 为了安全和彻底，执行的线程会有所区别：
     * 在UI线程上执行destroy操作
-    * UI线程上把销毁任务交给 **NativeModules thread**
-    * **NativeModules thread** 发出销毁通知，并通过`AsyncTask.excute`来执行：
+    * UI线程上把销毁任务交给 **NativeModules线程**
+    * **NativeModules线程** 发出销毁通知，并通过`AsyncTask.excute`来执行：
         * 清理context与HybridData(c++)
         * 销毁js与nativeModules线程
     * 随后JS VM会被销毁。
@@ -259,7 +273,6 @@ ReactNativeAndroid在创建createReactContext时会根据是否debug模式创建
 <details>
 <summary>ReactAndroid(java) 创建线程的范式</summary>
 
-> ReactAndroid(java) 创建线程的范式
 > 1. 派生Java.lang.Thread -> 重载run
 >   * MyThread extends Thread
 > 2. 实现Runnable 重载run
@@ -290,8 +303,8 @@ render() { return <View />}
 </details>
 
 * native -> js
-    * 回调
-    * native主动调用js方法，如cb/promise回调/事件发布/app启动runApplication等
+    * 执行js的回调，如如cb/promise回调，对应`com.facebook.react.bridge.Promise`，`com.facebook.react.bridge.Callback`
+    * native主动调用js方法，如事件发布/app启动runApplication等
 
 <details>
 <summary>代码例子</summary>
@@ -325,14 +338,14 @@ const { NativeModules } from 'react-native';
 // ReactInstanceManager.java
 NativeModuleRegistry nativeModuleRegistry = processPackages(...);
 ```
-* Android在createReactContext时生成一份nativeModules的表，并传递给c++层保存一份
-    * 解析入口：`ReactInstanceManager`
-    * 构造registry： `NativeModuleRegistryBuilder`, `NativeModuleRegistry`
-    * 传递到c++ bridge： `CatalystInstanceImpl`
+* Android在创建react上下文时生成一份nativeModules的表，并传递给c++层保存一份
 
 <details>
 <summary>Code</summary>
 
+* 解析入口：`ReactInstanceManager`
+* 构造registry： `NativeModuleRegistryBuilder`, `NativeModuleRegistry`
+* 传递到c++ bridge： `CatalystInstanceImpl`
 ```
 // ReactInstanceManager.java 生成
 NativeModuleRegistry nativeModuleRegistry = processPackages(...);
@@ -432,17 +445,19 @@ public class MainApplication extends Application implements ReactApplication {
 
 [试试编写自己的NativeModules与ViewManager](./android-helloworld.md)
 
-### NativeModules(java)的封装
-* 一个有两种ModuleRegistry：`NativeModuleRegistry` 和 `JavaScriptModuleRegistry`。
-    * 它们在创建reactContext以及初始化bridge时分别创建。
+### 注解(java) ——谁会被js调用
+ReactAndroid通过注解来标识可供js调用的方法，并用JavaMethodWrapper封装暴露到配置表中
+
+<details>
+<summary>NativeModules(java)的封装</summary>
+
+* 一个有两种ModuleRegistry，Native的module：`NativeModuleRegistry` 和 native调用js的module：`JavaScriptModuleRegistry`。
+    * 它们在创建react上下文以及初始化bridge时分别创建。
 * `NativeModuleRegistry`以MainApplication中的packages的modules列表构造。它会在c++层调用native方法时检索其中带有`@ReactMethod`注解的方法并封装，有一个`invoke`的方法，这个是c++层调用的入口
     * 封装Module：`JavaModuleWrapper`
     * 封装Method：`JavaMethodWrapper`
 * `JavaScriptModuleRegistry`默认为空，native调用js方法时，如果是第一次调用该方法，则会通过`Proxy.newProxyInstance`创建一个反射并存储，提供一个`invoke`的调用入口。
-
-
-### 注解(java) ——谁会被js调用
-ReactAndroid通过注解来标识可供js调用的方法，并用JavaMethodWrapper封装暴露到配置表中
+</details>
 
 <details>
 <summary>Demo Code</summary>
@@ -475,10 +490,11 @@ private void findMethods() {
     * native代码通过它初始化bridge，封装各种jni方法与底层沟通。
 * CatalystInstanceImpl.cpp
     * 初始化naiveToJsBridge与JsToNativeBridge，js引擎与native通过它做数据传输和方法调用。
+
 ### 跨端的数据交互 ——数据特殊的保存技巧
 跨端的数据结构是有讲究的。
 
-ReactAndroid与c++的交互数据结构是通过：NativeArray和NativeMap，以及继承它们的ReadableMap/WritableMap/ReadableArray/WritableArray来实现的。
+ReactAndroid与c++的交互数据结构：NativeArray和NativeMap，以及继承它们的ReadableMap/WritableMap/ReadableArray/WritableArray。
 
 结构类似如下：
 ```
@@ -522,9 +538,11 @@ public class WritableNativeMap extends ReadableNativeMap implements WritableMap 
 <details>
 <summary>Source Code<summary>
 
-> // Hybrid.h/Hybrid.cpp NativeArray/NativeMap部分调用链
->
-> initHybrid(C++) -> makeCxxInstance(Hybrid.h) -> makeHybridData(Hybrid.h) -> HybridData create + setNativePointer(set mNativePointer, 把指针传给java)
+```
+// Hybrid.h/Hybrid.cpp NativeArray/NativeMap部分调用链
+
+initHybrid(C++) -> makeCxxInstance(Hybrid.h) -> makeHybridData(Hybrid.h) -> HybridData create + setNativePointer(set mNativePointer, 把指针传给java)
+```
 </details>
 
 ### 两端方法调用
@@ -535,42 +553,54 @@ public class WritableNativeMap extends ReadableNativeMap implements WritableMap 
 * js调用native (通过c++ bridge)
     * 一般来说通过NativeModules来调用native方法
     * 调用会做batch，间隔5ms内的会batch
-        * `batchedBridge.enqeueNativeCall`
     * c++注入的方法
         * 执行native方法：global.nativeFlushQueueImmediate (马上执行，c++注入)
         * 执行native方法：global.nativeCallSyncHook (c++注入)
-        * global.native
     * 核心代码
         * js端NativeModules：`Libraries/BatchedBridge`
 
 * java调用js (通过c++ bridge)
-    * 通过 **jni** 由c++层调用
+    * 通过 **jni** 方法，jni -> c/c++ -> js
     * 场景
-        * 回调
+        * 回调方法
         * `catalystInstance.getJSModule(xxx.class).method(args)`
             * getJSModule做了一层反射，最终调用到`jniCallJSCallback`
     * 核心代码
-        * 在`JavaScriptModuleRegistry`存储并创建js反射方法到`CatalystInstanceImpl`的`jniCallJSFunction`
+        * `JavaScriptModuleRegistry.java`创建/储存
 
 * c++
-    * 来自native的call: native -> js
-        * 在js线程调用js的全局方法, 一般有这么几个：`callFunctionReturnFlushedQueue`,`invokeCallbackAndReturnFlushedQueue`, `flushedQueue`, `invokeCallbackAndReturnFlushedQueue`
-        * 把js返回的`call queue`(如果有)传回native(java)
+    * 来自native的调用方向: native -> c++ -> js
+        * 在js线程调用js的全局方法, 一般有这么几个
+            * `callFunctionReturnFlushedQueue`
+            * `invokeCallbackAndReturnFlushedQueue`
+            * `flushedQueue`
+            * `invokeCallbackAndReturnFlushedQueue`
+        * 把上述结果的`调用队列call queue`(如果有)传回native(java)
             * **重点why**：大多数情况，native调用js的方法，会使得js侧产生更多的native calls，这些native calls会被batched，并返回native执行。即`native -> js -> native`。
-        * 核心代码：
-            * java到c++的入口：`CatalystInstanceImpl::jniCallJSFunction` -> `Instance::callJSFunction`
+        <details>
+        <summary>核心代码</summary>
+
+        * java到c++的入口：`CatalystInstanceImpl::jniCallJSFunction` -> `Instance::callJSFunction`
             * 执行js全局方法：`JSCExecutor`
             * 执行结果传回native`NativeToJsBridge`, `JsToNativeBridge callNativeModules`
             * 执行native方法：`ModuleRegistry::callNativeMethod`
-
+        </details>
             
-    * 来自js的call: js -> native
-        * js侧batched的`calls queue`批量传给c++层
-            * batched: `batchedBridge.enqeueNativeCall`
-            * 执行：`global.nativeFlushQueueImmediate`/`global.nativeCallSyncHook`
-        * 通过存储在`ModuleRegistry`内的modules执行native端代码
+    * 来自js的调用方向: js -> c++ -> native
+        * js侧batched的`调用队列calls queue`批量传给c++层
+        * 通过存储在模块配置表`ModuleRegistry`内的modules执行native端代码
+
+        <details>
+        <summary>核心代码</summary>
+
+        * js:
+            * batched native调用: `BatchedBridge.enqeueNativeCall`
+            * 调用c++的方法：`global.nativeFlushQueueImmediate`/`global.nativeCallSyncHook`
+        * c++
             * `nativeFlushQueueImmediate` -> `callNativeMethod` -> native module的invoke
             * `nativeCallSyncHook` -> `callSerializableNativeHook` -> native module的invoke
+        </details>
+            
 
 ## View的渲染 ——react的view是如何对应到native的控件
 
