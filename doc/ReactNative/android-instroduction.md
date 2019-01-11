@@ -106,7 +106,7 @@ _r(moduleId) // reqeuire执行
 
 除了打包外，还有提供有用于开发的服务器dev-server，就是我们常用到的`npm start`
 
-我们可以定制Metro的各种配置，如服务器端口，打包配置，使之支持Typescript等等。
+我们可以定制Metro的各种配置，如服务器端口，打包配置，使之支持 **Typescript**、**业务分包** 等等。
 
 甚至，还可以把整个metro替换成自定义的打包器。
 
@@ -158,44 +158,70 @@ react-native中js runtime大多数情况是JavaScriptCore，在ios中使用的�
 
 ### ReactAndroid重要概念
 |Name|Describe|
-|-:|-:|
-|Application|Android的一个系统组件，一般一个apk只会有一个Application|
-|Activity||
-|ReactRootHost|与Application绑定，用于管理ReactInstanceManager|
-|ReactInstanceManager|与Application绑定，用于管理CatalystInstance|
-|ReactPackage||
-|ReactRootView||
-|reactContext||
-|CatalystInstance||
+|:-|:--|
+|Application|Android的一个系统组件，一般一个apk只会有一个Application，管理应用的全局信息|
+|Activity|Android的一个应用组件，用户可与其提供的屏幕进行交互，同一个Application中的多个Activity共享Application上下文，ReactActivity的逻辑大都委托给ReactActivityDelegate，在此处设置Activity打开哪个component|
+|ReactNativeHost|与Application绑定，用于管理ReactInstanceManager、JSBundle的名称等|
+|ReactInstanceManager|所谓的ReactInstance涵盖了单个或多个ReactRootView的管理、ReactContext、开发工具配置、JSBundle配置、跨端CatalystInstance等实例的内容，一般通过ReactInstanceManager配置/获取具体的CatalystInstance实例/ReactContext等|
+|ReactPackage|每个ReactPackage存放着那些需要被注入的本地模块NativeModules、视图组件ViewManagers和JS模块，在Application处实例化|
+|ReactRootView|一个存储RN应用native views的容器，屏幕尺寸、手势计算等，一个Activity会构建一个ReactRootView用于展示视图，并驱动ReactContext初始化的过程|
+|ReactContext|React应用的上下文，管理当前Activity、生命周期事件、存储线程、CatalystInstance等|
+|CatalystInstance|跨端通信的实例，包含构建bridge、各种jni方法调用、js runtime等|
 
 ### 常见疑问：
 1. 在业务开发过程中遇到的rn共享global code是什么机制？
 
-    * 同一个Activity可以有多个rootViews(components)共享一个上下文
-
 2. Application, Activity, react上下文，rn组件是什么关系？
-    
-    * 见总结
-
-3. AppState的作用范围？
-
-    * AppStateModule与Application绑定，作用于其下所有Activity
-
 
 ### 总结：
-* 同一个Application下的多个Activity共享Application的上下文
 
-* 一个Application只有一个`ReactRootHost`，一个`ReactInstanceManager`
-    * `ReactRootHost` 管理`ReactInstanceManager`
-    * `ReactInstanceManager` 管理react实例, `ReactPackage`
+* 同一个`Application`下多个`Activity`，它们共享`Application`的全局信息。
 
-* 每实例化一个ReactActivity，就会生成并绑定一个`reactContext`，一个`ReactRootView`
-    * `reactContext`用于记录管理当前Activity的js/nativeModules线程，跨端通信实例等
-    * `ReactRootView`用于承载各种组件渲染出来的view，还有布局相关的逻辑
+* 两个核心概念：`ReactRootView`、`ReactInstanceManager`
+    * `ReactInstanceManager`是ReactNative(Android)的核心管理部分，涵盖了单个或多个`ReactRootView`的管理、ReactContext、开发工具配置、JSBundle配置、跨端CatalystInstance等实例的内容
+    * `ReactRootView`是ReactNative视图的容器，它依托于`Activity`展示在屏幕上, 并由`ReactInstanceManager`统一管理。
+        * 每个`ReactRootView`都需要绑定一个react上下文`ReactContext`，这些上下文可以是不一样的，也可以是共享的。(**共享global code的原理**)
+        * 每个`ReactRootView`负责打开一个rn组件，对应`AppRegistry.registerComponent(appKey, componentFactory)`中的`appKey`
+        * 每个经过注册的RN component`AppRegistry.registerComponent(appKey, componentFactory)`想要构建展示，都需要创建一个`ReactRootView`。
 
-* 多个Activity在同一个Application的管理下，拥有不一样的`reactContext`，它们的runtime是隔离的。
+<details>
+<summary>启动一个RN Page所需的最简步骤</summary>
 
-* 同一个Activity可以有多个rootView(即业务中常见的多component，`AppRegistry.registerComponent(name, componentFactory)`)， 它们共享同一个`reactContext`
+```
+// 节选官方demo
+
+// 依托一个activity
+public class MyReactActivity extends Activity implements DefaultHardwareBackBtnHandler {
+    ...
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        ...
+        // 1. 新建一个ReactRootView
+        mReactRootView = new ReactRootView(this);
+
+        // 2. 构建/引用一个ReactInstanceManager
+        mReactInstanceManager = ReactInstanceManager.builder()
+                .setApplication(getApplication())
+                .setBundleAssetName("index.android.bundle")
+                .setJSMainModuleName("index.android")
+                .addPackage(new MainReactPackage())
+                .setUseDeveloperSupport(BuildConfig.DEBUG)
+                .setInitialLifecycleState(LifecycleState.RESUMED)
+                .build();
+
+        // 3. 启动react-native app, 此处即初始化上下文/package/线程/bridge等
+        // 注意这里的MyReactNativeApp必须对应“index.android.js”中的
+        // “AppRegistry.registerComponent()”的第一个参数
+        mReactRootView.startReactApplication(mReactInstanceManager, "MyReactNativeApp", null);
+
+        // 4. 设置在当前activity展示出来
+        setContentView(mReactRootView);
+    }
+}
+
+```
+</details>
 
 ### 再来看一下启动过程中都做了什么，初始化了什么：
 
@@ -205,7 +231,7 @@ react-native中js runtime大多数情况是JavaScriptCore，在ios中使用的�
 
    2.1 创建一个`ReactRootView`用来承载views
 
-   2.2 获取Application上的`ReactInstanceManager`(若无则生成一个), 用来管理所有的rootViews，与C++层的通信，JS VM的生成器，NativeModules包，JSBundle加载方式，debug支持等。
+   2.2 构造/获取`ReactInstanceManager`, 用来管理所有的rootViews，与C++层的通信，JS VM的生成器，NativeModules包，JSBundle加载方式，debug支持等。
 
    2.3 创建一个当前rootView的react上下文(包含跨端通信实例，线程，所在Activity引用)
 
