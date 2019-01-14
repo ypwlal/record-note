@@ -133,7 +133,7 @@ ReactNative的跨Java，c/c++，js的应用框架，其中JNI是java与c/c++的�
 * c++/java源码的对应关系
     * c++代码中充满了`static constexpr auto kJavaDescriptor`的声明，它们的值就是对应的java代码位置，如`static constexpr auto kJavaDescriptor = "Lcom/facebook/react/bridge/CatalystInstanceImpl;`(仅对wrapper类)
 
-[试试编写自己的jni NativeModules](./android-helloworld.md#custom-method-from-cxx)
+[试试编写自己的jni NativeModules](./android-helloworld.md#%E8%87%AA%E5%AE%9A%E4%B9%89%E4%B8%80%E4%B8%AA%E6%9D%A5%E8%87%AAc%E7%9A%84%E6%96%B9%E6%B3%95jni)
 
 ## JS VM ——不仅只有一种
 
