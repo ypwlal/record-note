@@ -172,7 +172,39 @@ public class HelloWorld extends ReactContextBaseJavaModule {
 ```
 编写c++代码：
 1. 新建一个放置jni代码的目录： `testRn/android/app/src/main/jni`
-2. 此处我们采用`ndk-build`的方案来编译，编写`Application.mk`与`Andorid.mk`编译配置文件
+2. hello.cpp、hello.h
+```
+// hello.cpp
+#include <jni.h>       // JNI header provided by JDK
+#include "hello.h"  // Generated
+
+using namespace std;
+
+// Implementation of the native method getHello()
+JNIEXPORT jstring JNICALL Java_com_testrn_myModules_HelloWorld_getHello(JNIEnv *env, jobject thisObj) {
+	// cout << "Hello World from C++!" << endl;
+    jstring hello = (env)->NewStringUTF("Hello from C++");
+    return hello;
+}
+```
+
+```
+// hello.h//
+#ifndef TESTRN_HELLO_H
+#define TESTRN_HELLO_H
+
+#ifdef __cplusplus
+extern "C" { // 按c语言编译
+#endif
+JNIEXPORT jstring JNICALL Java_com_testrn_myModules_HelloWorld_getHello(JNIEnv *, jobject);
+#ifdef __cplusplus
+}
+#endif
+
+#endif
+```
+
+3. 此处我们采用`ndk-build`的方案来编译，编写`Application.mk`与`Andorid.mk`编译配置文件
 ```
 // testRn/android/app/src/main/jni/Application.mk
 APP_ABI := all
@@ -191,10 +223,10 @@ LOCAL_MODULE := hellojni
 include $(BUILD_SHARED_LIBRARY)
 
 ```
-3. 在Android Studio中链接源码，如右键jni文件夹`Link C++ Project with Gradle`，选择`ndk-build`方案
+4. 在Android Studio中链接源码，如右键jni文件夹`Link C++ Project with Gradle`，选择`ndk-build`方案
 > 此外，在android中利用c/c++代码的构建方法还有cmake, [详情](https://developer.android.com/studio/projects/add-native-code?utm_source=android-studio#link-gradle)
 
-4. 构建app就可以使用到该方法了
+5. 构建app就可以使用到该方法了
 `NativeModules.HelloWorld.getHelloWorldFromCxx().then(res => console.log(res))`
 
 ### 创建一个自定义视图组件
