@@ -182,7 +182,6 @@ using namespace std;
 
 // Implementation of the native method getHello()
 JNIEXPORT jstring JNICALL Java_com_testrn_myModules_HelloWorld_getHello(JNIEnv *env, jobject thisObj) {
-	// cout << "Hello World from C++!" << endl;
     jstring hello = (env)->NewStringUTF("Hello from C++");
     return hello;
 }
@@ -332,7 +331,7 @@ export default class App extends Component<Props> {
 
 const styles = StyleSheet.create({...});
 ```
-可以看到效果：
+可以看到结果：
 
 NativeModules：
 
