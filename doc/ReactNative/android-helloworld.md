@@ -1,5 +1,5 @@
 
-## react-native 的custom helloworld
+## react-native 的custom helloworld(Android)
 
 
 ### custom package
