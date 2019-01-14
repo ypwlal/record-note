@@ -91,7 +91,7 @@ const Config = {
 ### JSBundle
 JSBundle文件，本质是一个js文件，它会被加载并运行在js vm中。
 
-打包出来的文件跟web开发的webpack等工具构建出来的内容相似，同样是一套module体系的polyfill
+打包出来的文件跟web开发的webpack等工具构建出来的内容相似，同样是一套module体系的polyfill。
 
 它的结构类似如下：
 ```
@@ -104,7 +104,7 @@ _r(moduleId) // reqeuire执行
 ### Metro
 [Metro](https://facebook.github.io/metro/)是facebook的一个轻量级打包工具，用于解决react-native的js与静态资源(如png等)的打包。
 
-除了打包外，还有提供有用于开发的服务器dev-server，就是我们常用到的`npm start`
+除了打包外，还有提供有用于开发的服务器dev-server，就是我们常用到的`npm start`。
 
 我们可以定制Metro的各种配置，如服务器端口，打包配置，使之支持 **Typescript**、**业务分包** 等等。
 
@@ -122,6 +122,8 @@ ReactNative的跨Java，c/c++，js的应用框架，其中JNI是java与c/c++的�
 * 调试编译
     * 在ReactNative中，采用的是ndk-build的方式编译。
     * 在Android Studio上支持的是cmake的调试，暂时未找到支持ReactNative c++源码的断点方案，或许可以走ndk-gdb的方案？
+    * [Android NDK详情](https://developer.android.com/ndk/guides/?hl=zh-cn)
+    * [Andorid Studio添加c/c++方法](https://developer.android.com/studio/projects/add-native-code)
 
 * 加载so文件
     * 经过编译之后，c/c++端的代码会被编译成so文件。
@@ -151,7 +153,6 @@ react-native中js runtime大多数情况是JavaScriptCore，在ios中使用的�
 * `ProxyJavaScriptExecutor`
 * `WebsocketJavaScriptExecutor`
 * `OnLoad.cpp#ProxyJavaScriptExecutorHolder`
-
 </details>
 
 ## 启动流程 ——老生常谈以及RN上下文的关系
@@ -178,7 +179,8 @@ react-native中js runtime大多数情况是JavaScriptCore，在ios中使用的�
 * 同一个`Application`下多个`Activity`，它们共享`Application`的全局信息。
 
 * 两个核心概念：`ReactRootView`、`ReactInstanceManager`
-    * `ReactInstanceManager`是ReactNative(Android)的核心管理部分，涵盖了单个或多个`ReactRootView`的管理、ReactContext、开发工具配置、JSBundle配置、跨端CatalystInstance等实例的内容
+    * `ReactInstanceManager`是ReactNative(Android)的核心管理部分，涵盖了单个或多个`ReactRootView`的管理、ReactContext、开发工具配置、JSBundle配置、跨端CatalystInstance等实例的内容。
+        * 一个`ReactInstanceManager`可以在多个`Activities`或`Fragments`间共享
     * `ReactRootView`是ReactNative视图的容器，它依托于`Activity`展示在屏幕上, 并由`ReactInstanceManager`统一管理。
         * 每个`ReactRootView`都需要绑定一个react上下文`ReactContext`，这些上下文可以是不一样的，也可以是共享的。(**共享global code的原理**)
         * 每个`ReactRootView`负责打开一个rn组件，对应`AppRegistry.registerComponent(appKey, componentFactory)`中的`appKey`
