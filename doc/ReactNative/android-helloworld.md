@@ -3,7 +3,7 @@
 
 
 ### custom package
-自定义一个包含java方法、c++方法、自定义视图的Package
+自定义一个包含java方法、c++方法(jni)、自定义视图的Package
 
 #### 1. 构造一个Package
 ReactPackage是集中注入自定义的原生方法、原生视图的“包裹”。
@@ -193,7 +193,7 @@ JNIEXPORT jstring JNICALL Java_com_testrn_myModules_HelloWorld_getHello(JNIEnv *
 #define TESTRN_HELLO_H
 
 #ifdef __cplusplus
-extern "C" { // 按c语言编译
+extern "C" { // 按C语言的格式进行编译，保证生成的符号能正常链接
 #endif
 JNIEXPORT jstring JNICALL Java_com_testrn_myModules_HelloWorld_getHello(JNIEnv *, jobject);
 #ifdef __cplusplus
