@@ -70,13 +70,23 @@ go的协程是M:N, 即M条线程对应N个协程(由调度器分配，对使用�
 
 ![mpg](./golang.png)
 
+简单说明：
+* G 既是我们说的goroutine协程，通过`go fn()`来生成。通过调度策略供M执行。
+    * g0除外，g0是每个M新建时构造的，用于调度、调整栈大小等。
+* M 对应的是真实的线程，它通过P来执行goroutine(G)，与P和G解耦，通过调度策略获取P和G。这也是go协程可以做到M对N的基础。
+    * M不会无限创建，目前通过简单的判断当前系统压力大的话不会继续创建M，依赖M的spinning状态
+* P 维护了一个本地G队列，M通过P依次获取G来执行，执行完成的G会放入本地的gfree队列供后续复用。
+    * P的数量一般来说在初始化完毕后就是固定的，默认是cpu核心数，可以通过GOMAXPROCS来设置。
+        * 代码中设置`runtime.GOMAXPROCS(n)`会通过StopTheWorld重新调整
+    * P 管理着内存分配器。
+* 全局G队列 顾名思义“无家可归”的G会放在这里，被选择的优先级较低，一般是因为P的本地队列满/被抢占出来。
+* 每个channel都有队列管理接受者、发送者中断的G
+
 * 一次简单的流程循环：新建/唤醒M -> 获取P -> 通过调度查找G(找不到休眠M，等待信号唤醒继续查找) -> 执行G -> G完毕后继续调度
-* M不会无限创建，目前通过简单的判断当前系统压力大的话不会继续创建M，依赖M的spinning状态
-* P的数量一般来说在初始化完毕后就是固定的，默认是cpu核心数，可以通过GOMAXPROCS来设置。
-    - 代码中设置`runtime.GOMAXPROCS(n)`会通过StopTheWorld重新调整
+
 
 ## `go fn()发生了什么`
-`go fn()` 会被转换成新建一个g([runtime.newproc](https://github.com/golang/go/blob/release-branch.go1.11/src/runtime/proc.go#L3307))，构造它的栈/运行上下文，放入本地队列，若队列已满则取当前队列的一半丢进全局队列，检查是否需要唤醒/新建一个线程去调度。**所以fn不会马上被执行**
+`go fn()` 会新建一个go协程，构造它的栈/运行上下文/之形函数，放入P的本地队列等待被M执行。若队列已满则取当前队列的一半丢进全局队列，同时检查是否需要唤醒/新建一个线程去调度。**fn不会马上被执行**([runtime.newproc](https://github.com/golang/go/blob/release-branch.go1.11/src/runtime/proc.go#L3307))
 
 ## goroutine什么时候让出控制权
 
@@ -84,11 +94,11 @@ go的协程是M:N, 即M条线程对应N个协程(由调度器分配，对使用�
     * 本身执行完毕
     * 调用syscall/network
         * 系统调用已经被go封装过
-            * 一个syscall会改变g和p的状态，解除p与m的链接
-            * 该p可以被抢占
-            * 当前G等待syscall完毕后再决定是放入全局或是直接运行
+            * 一个syscall会改变G和P的状态，解除P与G的链接
+            * 系统调用中M的P可以被抢占
+            * 系统调用中M当前执行中的G会等待syscall完毕后再决定是放入全局或是直接运行
         * golang里面的网络IO其实是异步IO，通过channel等机制把控制流改成同步形式
-    * channel
+    * channel的读写堵塞
 * 隐式
     * 抢占
     * gc/stw/栈调整等
@@ -135,19 +145,20 @@ func exitsyscall() {
 
 
 ## 调度
-- 目标：为当前的m找到可运行状态的goroutine
+- 目标：为当前的M找到可运行状态的goroutine
 - 执行调度的时机
-    - 新建m/m被唤醒的时候
+    - 新建或唤醒M的时候
     - 停止一个goroutine(如goroutine执行完毕/gopark/gosched等)的时候
 - 基本策略 [detail](https://github.com/golang/go/blob/release-branch.go1.11/src/runtime/proc.go#L2557)
-    - 优先执行GC的G
-    - 全局调度次数每满61次，就去全局goroutine队列获取(一般情况下每次goroutine执行时会次数加一)
-    - 在当前M的P中的队列中获取
-    - 全局队列
-    - 检查netpoll获取
-    - **work steal** 去其他p的队列中偷，每次偷一半
+    - 调度函数会在当前线程M的P本地队列、全局G队列、GC的G(没错GC也会通过goroutine并行)、网络poll、其他P的本地队列中获取可以执行的G。详细如下：
+        - 优先执行GC的G
+        - 全局调度次数每满61次，就去全局goroutine队列获取(一般情况下每次goroutine执行时会次数加一)
+        - 在当前M的P中的队列中获取
+        - 全局队列
+        - 检查netpoll获取
+        - **work steal** 去其他p的队列中偷G，每次偷一半
     - 如果没有可用的g，接触p与m的联系，休眠M，下次被唤醒时重新搜索可用G
-    - 为了保障随时有可用的M来执行G每次调度都需要判断是否新建/唤醒一个M [detail](https://github.com/golang/go/blob/release-branch.go1.11/src/runtime/proc.go#L50)
+    - 为了保障随时有可用的M来执行G，每次调度都需要判断是否新建/唤醒一个M [detail](https://github.com/golang/go/blob/release-branch.go1.11/src/runtime/proc.go#L50)
     - 调度过程中，如果满足[**spinning M数量的两倍不小于正在工作的p数量**](https://github.com/golang/go/blob/release-branch.go1.11/src/runtime/proc.go#L2337)会认为资源紧张从而终止该次调度休眠M 
 - 新建/唤醒M
     - when
@@ -162,12 +173,12 @@ func exitsyscall() {
     * 抢占
         * 遍历全部P
         * 正在进行系统调用且经历过一次sysmon的P
-        * 运行超过10ms的g
+        * 运行超过10ms的G
             * 不会马上抢占，而是给予一个抢占标示，在stack空间判断时再实行
             * 意味着一个goroutine只有在下一次执行（**有栈空间检查的**）函数时才会触发中断调度
             * **PS: 个人觉得这种抢占策略并不完美有隐患，见下面的例子**
     * netpoll
-        * 获取netpoll中非block的g列表(全局查询间隔时间不超过10ms)，放入全局g队列
+        * 获取netpoll中非block的G列表(全局查询间隔时间不超过10ms)，放入全局G队列
 
 <details>
 <summary>两个例子说明抢占机制</summary>
@@ -225,8 +236,8 @@ func main() {
 	a := 2
 	b := 3
 	c := 4
-	go h()            // h会执行
-	d := addTest2(a, b, c) // block住，抢占无效
+	go h()            // 抢占有效，h会执行
+	d := addTest2(a, b, c)
 	fmt.Println(d)
 }
 ```
@@ -246,18 +257,30 @@ func main() {
 
 ## 计算机基础
 ### 指令与寄存器
-我们的代码最终会转换成CPU指令, CPU一条一条的运行。
+我们的代码最终都会被转换成CPU指令。
 
-可以通过`go tool compile -N -l -S hello.go > hello.asm`来生成go的汇编代码，`-N -l` 禁用内联优化，sample如下
+例如下面的函数
+```
+func add(a, b int) int {
+	return a + b
+}
+```
+转换成汇编代码
+最左侧的`0x0000 00000`就是指令地址，`MOVQ	$0, "".~r2+24(SP)`是指令。
+```
+"".add STEXT nosplit size=25 args=0x18 locals=0x0
+	0x0000 00000 (hello.go:147)	TEXT	"".add(SB), NOSPLIT, $0-24 // 栈空间为0
+	...
+	0x0000 00000 (hello.go:147)	MOVQ	$0, "".~r2+24(SP) // 返回值为0
+	0x0009 00009 (hello.go:148)	MOVQ	"".a+8(SP), AX   //  AX = a
+	0x000e 00014 (hello.go:148)	ADDQ	"".b+16(SP), AX  // AX += b
+	0x0013 00019 (hello.go:148)	MOVQ	AX, "".~r2+24(SP) // 返回值 = AX
+	0x0018 00024 (hello.go:148)	RET                       // 返回
+```
 
-```
-0x0000 00000 (hello.go:137)	TEXT	"".printA(SB), $144-8
-	0x0000 00000 (hello.go:137)	MOVQ	(TLS), CX
-	0x0009 00009 (hello.go:137)	LEAQ	-16(SP), AX
-	0x000e 00014 (hello.go:137)	CMPQ	AX, 16(CX)
-    ...
-```
-所以，只需知道的指令地址，即可实现切出（下一个目的地的指令地址）/ 恢复（之前运行到的指令地址）
+> 可以通过`go tool compile -N -l -S hello.go > hello.asm`来生成go的汇编代码，`-N -l` 禁用内联优化
+
+告诉CPU指令地址(PC)，我们能去任何想去的地方。协程的重点就是保存PC（记录程序中断的地方）和恢复PC（回到中断的地方继续执行）
 
 * CPU通过`PC`(Program Counter)寄存器保存当前指令地址，通过`JMP`、`RET`、`CALL`等指令改变PC，实现流程控制
 * CPU的关键寄存器大致有基准寄存器`BP`（指向栈底）、栈顶寄存器`SP`（指向栈顶）、通用寄存器（储存临时变量等）
@@ -266,36 +289,36 @@ func main() {
 
 栈：先进后出，通过push/pop操作。
 
-计算机中说到的栈用于记录函数调用的流程，储存本地变量、返回地址等关键信息。(回忆一下程序出错抛出来的栈是依据什么生成的？) 
+栈被用于记录函数调用的流程，储存本地变量、返回地址等关键信息。(回忆一下程序出错抛出来的栈是依据什么生成的？) 
 
-如：
+下面是一个运行中的栈，包含了函数调用所需的变量：
 ```
++------------------+ <- BP
+|       本地a参数   |
++------------------+ 
+|       本地b参数   |
++------------------+ 
+| callee函数的入参1 |
++------------------+ 
+| callee函数的入参2 |
 +------------------+
-|       本地a参数   |
-+------------------+ 
-|       本地a参数   |
-+------------------+ 
-|  下一个参数的入参1  |
-+------------------+ 
-|  下一个参数的入参1  |
-+------------------+  Call 下一个函数
-|  return addr     |  caller下一条指令
-+------------------+ 
+|  return addr     |
++------------------+ <- SP
 
 ```
+所以，保存栈就是保存上下文，而保存栈的关键是纪录它的几个寄存器，最重要的是指向栈底的`BP`寄存器、指向栈顶的`SP`寄存器。通过这两个地址可以准确定位到函数的上下文。
 
-因为要自己控制流程，所以go的协程是在堆上构建的栈。
+> 因为要自己控制流程，所以go的协程是在堆上构建的栈。
 
 #### goroutine的栈
 
-go的协程栈是在堆上分配的需要自己管理。
-
 goroutine 初始分配的大小为2k，会结合栈帧大小进行扩容。GC时进行收缩。
-* 编译器会智能地给需要检查栈空间的函数头尾添加检查指令(对应有无`NOSPLIT`的标示)
-* 判断栈空间不足时会新建一个2倍大小的栈，然后复制过去。
-* 调整stack时会中断协程，切换g0
+* 编译器会智能地给函数头尾添加检查指令
+    * 对应汇编代码中有无`NOSPLIT`的标示
+    * 这也是实现抢占的重要方式。
+* 判断栈空间不足时会新建一个2倍大小的栈，然后把当前的栈复制过去。
 * 方向是从高地址向低地址增长
-* 栈大小(stackguard)还与抢占有关
+* 调整stack时会中断协程，切换到g0
 
 
 <details>
@@ -304,8 +327,8 @@ goroutine 初始分配的大小为2k，会结合栈帧大小进行扩容。GC时
 ```
 g的struct中相关的字段：
 stack{hi,lo} // 高低内存地址
-stackguard0 uintptr // 用在go中的栈空间阈值, 低于这个值会扩张栈
-stackguard1 uintptr // 用在c中的栈空间阈值
+stackguard0 uintptr // 用在go中的栈帧阈值, 低于这个值会扩张栈
+stackguard1 uintptr // 用在c中的栈帧阈值
 ```
 ```
 +------------------+ hi
@@ -345,7 +368,7 @@ stackguard1 uintptr // 用在c中的栈空间阈值
 
 ### 汇编
 
-汇编代码其实就是操作栈和寄存器的过程， 在汇编代码中我们可以直接访问到CPU的各大寄存器。这是实现协程的手段。
+汇编代码其实就是操作栈和寄存器的过程，在汇编代码中我们可以直接访问到CPU的寄存器。**这是实现协程的手段**。
 
 golang的汇编器采用的是基于plan9
 
@@ -360,7 +383,7 @@ reference:
 
 
 <details>
-<summary>举个🌰</summary>
+<summary>举个详细的例子</summary>
 
 ```
 func add(a, b int) int {
@@ -380,7 +403,7 @@ func main() {
 ```
 // add函数
 "".add STEXT nosplit size=25 args=0x18 locals=0x0
-	0x0000 00000 (hello.go:147)	TEXT	"".add(SB), NOSPLIT, $0-24 // 栈空间为0
+	0x0000 00000 (hello.go:147)	TEXT	"".add(SB), NOSPLIT, $0-24 // 栈帧为0
 	...
 	0x0000 00000 (hello.go:147)	MOVQ	$0, "".~r2+24(SP) // 返回值为0
 	0x0009 00009 (hello.go:148)	MOVQ	"".a+8(SP), AX   //  AX = a
@@ -444,15 +467,17 @@ type g struct {
 type gobuf struct {
     ...
     sp   uintptr
-	pc   uintptr
-	lr   uintptr // 用于arm平台
-	bp   uintptr
+    pc   uintptr
+    lr   uintptr // 用于arm平台
+    bp   uintptr
     ...
 }
 ```
 每次需要切换都会把栈信息和PC保存到g中，恢复的时候还原
 
 在很多需要切换g的方法中都有保存的身影如[`mcall`](https://github.com/golang/go/blob/release-branch.go1.11/src/runtime/asm_amd64.s#L274)、[`systemstack`](https://github.com/golang/go/blob/release-branch.go1.11/src/runtime/asm_amd64.s#L314)、[`goexit`](https://github.com/golang/go/blob/release-branch.go1.11/src/runtime/asm_amd64.s#L1332)等等，类似如下：
+
+保存当前G协程的上下文
 ```
 ...
 MOVQ	SI, (g_sched+gobuf_pc)(AX)
@@ -461,7 +486,7 @@ MOVQ	AX, (g_sched+gobuf_g)(AX)
 MOVQ	BP, (g_sched+gobuf_bp)(AX)
 ...
 ```
-还原例子（execute一个g）：
+恢复一个G协程然后执行：
 ```
 // void gogo(Gobuf*)
 get_tls(CX)
@@ -475,11 +500,13 @@ MOVQ	$0, gobuf_ret(BX)
 MOVQ	$0, gobuf_ctxt(BX)
 MOVQ	$0, gobuf_bp(BX)
 MOVQ	gobuf_pc(BX), BX
-JMP	BX
+JMP	BX                     // CPU跳转到上次的指令位置，继续上次的位置执行
 ```
 
-PC和SP经常会由程序定制，如调度执行g的时候会把`goexit`设置为SP的值，使得g执行完进入exit环节。
+PC和SP经常会由程序定制，如调度执行g的时候会把`goexit`设置为SP的值，使得G执行完进入exit环节。
 
 # 实现一个协程
+
+cgo太复杂，cpp大法好
 
 待续
