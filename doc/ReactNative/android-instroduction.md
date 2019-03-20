@@ -143,6 +143,8 @@ react-native中js runtime大多数情况是JavaScriptCore，在ios中使用的�
 
 除此之外，在debug remote状态下，会通过 **websocket** 使用debugger tools的runtime(一般是chrome的V8)，这也是我们可以在debugger tools上调试的原因。
 
+> Android版本的jsc挺旧的，不支持一些新的特性，如mobx5+依赖的Proxy
+
 > 引发的一个常见陷阱：在不同js runtime中的Date构造是有所差异的。会出现在debug模式(V8)下没问题，在release出现问题(JSC)。
 
 > 不同场景注入给js的nativeModules配置表实现也是不一样的
@@ -327,7 +329,7 @@ public class MyReactActivity extends Activity implements DefaultHardwareBackBtnH
 
 ```
 NativeModules.xxModules.xxMethod(); // 回调的then，callback由native端触发
-render() { return <View />}  
+render() { return <View /> }  
 ```
 </details>
 
