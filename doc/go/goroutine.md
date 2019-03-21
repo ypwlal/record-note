@@ -391,7 +391,9 @@ stackguard1 uintptr // 用在c中的栈帧阈值
 ```
 </details>
 
-### 汇编
+### 汇编 实现协程的工具
+
+现在我们知道所需的几个寄存器，那么从哪里去读取和操作CPU的寄存器呢？答案是通过 **汇编**。
 
 汇编代码其实就是操作栈和寄存器的过程，在汇编代码中我们可以直接访问到CPU的寄存器。**这是实现协程的手段**。
 
@@ -400,7 +402,7 @@ golang的汇编器采用的是基于plan9
 汇编是仅次于机器码贴近底层的存在，不具备跨平台性，每个平台/架构的汇编代码都是不一样的。本文对应的是amd64，golang项目中根据CPU架构命名文件，如`sys_x86.go`、[`asm_amd64.s`](https://github.com/golang/go/blob/release-branch.go1.11/src/runtime/asm_amd64.s)等
 
 
-reference:
+golang asm reference:
 - [官方指南](https://golang.org/doc/asm)
 - https://github.com/cch123/golang-notes/blob/master/assembly.md
 - https://github.com/teh-cmc/go-internals/blob/master/chapter1_assembly_primer/README.md
