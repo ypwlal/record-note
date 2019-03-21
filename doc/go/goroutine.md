@@ -24,13 +24,15 @@ request(function (res) { // 回调通知，不堵塞不切线程，单线程性�
 doOtherthings()        // 紧接着执行
 ```
 
-可以对比看出同步模式写起来逻辑最清晰，异步模式call hell了解一下。有没有其他既有异步的高性能又有同步的优雅呢？目前给出了一个答案是协程。
+可以对比看出同步模式写起来逻辑最清晰但是切换成本高，异步模式性能好但是控制流不够直观清晰，callback hell了解一下。
+
+有没有其他既有异步的高性能又有同步的优雅呢？目前给出了一个答案是协程。
 
 它可以理解为用户态的线程，系统层面并不会感知到协程，协程的调度切换由程序自己控制。
 
 ```
 // 协程方案
-es = request(...) // 让出控制权，但是不用切换线程/进程，仅仅是程序自己实现的切换
+res = request(...) // 让出控制权，但是不用切换线程/进程，仅仅是程序自己实现的切换
 doSomething(res)   // block
 ```
 
@@ -71,7 +73,7 @@ go的协程是M:N, 即M条线程对应N个协程(由调度器分配，对使用�
 ![mpg](./golang.png)
 
 简单说明：
-* G 既是我们说的goroutine协程，通过`go fn()`来生成。通过调度策略供M执行。
+* G 即是我们说的goroutine协程，通过`go fn()`来生成。通过调度策略供M执行。
     * g0除外，g0是每个M新建时构造的，用于调度、调整栈大小等。
 * M 对应的是真实的线程，它通过P来执行goroutine(G)，与P和G解耦，通过调度策略获取P和G。这也是go协程可以做到M对N的基础。
     * M不会无限创建，目前通过简单的判断当前系统压力大的话不会继续创建M，依赖M的spinning状态
@@ -86,7 +88,7 @@ go的协程是M:N, 即M条线程对应N个协程(由调度器分配，对使用�
 
 
 ## `go fn()发生了什么`
-`go fn()` 会新建一个go协程，构造它的栈/运行上下文/之形函数，放入P的本地队列等待被M执行。若队列已满则取当前队列的一半丢进全局队列，同时检查是否需要唤醒/新建一个线程去调度。**fn不会马上被执行**([runtime.newproc](https://github.com/golang/go/blob/release-branch.go1.11/src/runtime/proc.go#L3307))
+`go fn()` 会新建一个go协程，构造它的栈/运行上下文/执行函数，放入P的本地队列等待被M执行。若队列已满则取当前队列的一半丢进全局队列，同时检查是否需要唤醒/新建一个线程去调度。**fn不会马上被执行**([runtime.newproc](https://github.com/golang/go/blob/release-branch.go1.11/src/runtime/proc.go#L3307))
 
 ## goroutine什么时候让出控制权
 
@@ -98,7 +100,7 @@ go的协程是M:N, 即M条线程对应N个协程(由调度器分配，对使用�
             * 系统调用中M的P可以被抢占
             * 系统调用中M当前执行中的G会等待syscall完毕后再决定是放入全局或是直接运行
         * golang里面的网络IO其实是异步IO，通过channel等机制把控制流改成同步形式
-    * channel的读写堵塞
+    * channel的发送接收堵塞
 * 隐式
     * 抢占
     * gc/stw/栈调整等
@@ -145,6 +147,13 @@ func exitsyscall() {
 
 
 ## 调度
+
+内核线程的调度是一般是抢占式的，由上层系统或虚拟机调度，程序无需关注。
+
+但是协程的调度是协作式的，主动让出机制，需要程序自行决定什么时候中断/恢复协程。所以每种协程方案都有自己的调度策略。
+
+go的调度特点是每个协程G都是与M、P解耦的，可以被调度到其他线程执行，即M个线程可以执行N个协程，如何分配由调度策略控制。
+
 - 目标：为当前的M找到可运行状态的goroutine
 - 执行调度的时机
     - 新建或唤醒M的时候
@@ -156,7 +165,7 @@ func exitsyscall() {
         - 在当前M的P中的队列中获取
         - 全局队列
         - 检查netpoll获取
-        - **work steal** 去其他p的队列中偷G，每次偷一半
+        - **work steal** 去其他p的队列中偷G，每次偷一半 (这是一个比较著名的策略，[更多可读](http://supertech.csail.mit.edu/papers/steal.pdf))
     - 如果没有可用的g，接触p与m的联系，休眠M，下次被唤醒时重新搜索可用G
     - 为了保障随时有可用的M来执行G，每次调度都需要判断是否新建/唤醒一个M [detail](https://github.com/golang/go/blob/release-branch.go1.11/src/runtime/proc.go#L50)
     - 调度过程中，如果满足[**spinning M数量的两倍不小于正在工作的p数量**](https://github.com/golang/go/blob/release-branch.go1.11/src/runtime/proc.go#L2337)会认为资源紧张从而终止该次调度休眠M 
@@ -168,6 +177,12 @@ func exitsyscall() {
     - 条件：有空闲p且无spinning状态M
 
 ## 抢占
+
+为什么有了调度还需要抢占呢？其实是为了弥补公平性。
+
+每一条线程每个时刻只能执行一个协程，如果一个协程长时间执行，当前的线程就无法执行调度函数，那就谈不上切换，资源被某个协程一直占用，导致协作失败。所以需要补充一个抢占的机制，来把控制权抢过来供其他协程使用。
+
+显然，抢占需要一条新的线程。
 
 * 程序开始时会新建一个线程去执行函数[sysmon](https://github.com/golang/go/blob/release-branch.go1.11/src/runtime/proc.go#L4320)，它会定时做强制gc、**抢占**、netpoll等工作
     * 抢占
@@ -245,18 +260,23 @@ func main() {
 </details>
 
 # go协程的实现
+
 协程简单来说只有两部分：
 * 挂起
-    * 保存当前上下文，跳转下一个指令
+    * 中断执行，保存当前代码执行位置、环境上下文
 * 恢复
-    * 恢复上下文，继续下一条指令
+    * 恢复上下文，返回中断代码的执行位置继续执行，
 
-上下文很简单：关键寄存器
+* 原理
+    * 程序执行的位置，可以通过`PC`寄存器获取。
+    * 程序执行的上下文，是通过栈来保存的。
 
 在此之前，需要一些计算机基础。
 
 ## 计算机基础
+
 ### 指令与寄存器
+
 我们的代码最终都会被转换成CPU指令。
 
 例如下面的函数
@@ -280,7 +300,9 @@ func add(a, b int) int {
 
 > 可以通过`go tool compile -N -l -S hello.go > hello.asm`来生成go的汇编代码，`-N -l` 禁用内联优化
 
-告诉CPU指令地址(PC)，我们能去任何想去的地方。协程的重点就是保存PC（记录程序中断的地方）和恢复PC（回到中断的地方继续执行）
+告诉CPU指令地址(PC)，我们能去任何想去的地方。
+
+**协程的重点就是保存PC（记录程序中断的地方）和恢复PC（回到中断的地方继续执行）**
 
 * CPU通过`PC`(Program Counter)寄存器保存当前指令地址，通过`JMP`、`RET`、`CALL`等指令改变PC，实现流程控制
 * CPU的关键寄存器大致有基准寄存器`BP`（指向栈底）、栈顶寄存器`SP`（指向栈顶）、通用寄存器（储存临时变量等）
@@ -306,7 +328,7 @@ func add(a, b int) int {
 +------------------+ <- SP
 
 ```
-所以，保存栈就是保存上下文，而保存栈的关键是纪录它的几个寄存器，最重要的是指向栈底的`BP`寄存器、指向栈顶的`SP`寄存器。通过这两个地址可以准确定位到函数的上下文。
+**所以，保存栈就是保存上下文，而保存栈的关键是纪录它的几个寄存器，最重要的是指向栈底的`BP`寄存器、指向栈顶的`SP`寄存器。通过这两个地址可以准确定位到函数的上下文。**
 
 > 因为要自己控制流程，所以go的协程是在堆上构建的栈。
 
@@ -316,6 +338,7 @@ goroutine 初始分配的大小为2k，会结合栈帧大小进行扩容。GC时
 * 编译器会智能地给函数头尾添加检查指令
     * 对应汇编代码中有无`NOSPLIT`的标示
     * 这也是实现抢占的重要方式。
+    * 这种透明插桩方式是否还有更广泛的应用？
 * 判断栈空间不足时会新建一个2倍大小的栈，然后把当前的栈复制过去。
 * 方向是从高地址向低地址增长
 * 调整stack时会中断协程，切换到g0
@@ -449,11 +472,15 @@ func main() {
 
 </details>
 
-由此可见，协程需要保存的寄存器主要有：
-- `PC`
-- `BP` 
-- `SB`
-- 一些通用的寄存器，存起来肯定最安全。golang更多是通过SP的偏移量来获取参数，且初始化时已知栈帧大小/参数大小，由此推导其他参数，故go源码中只存了`PC`、`BP` 、`SB`。[更多可见](https://eli.thegreenplace.net/2011/09/06/stack-frame-layout-on-x86-64runtime/stack.gov)
+### 总结
+
+协程需要保存的寄存器主要有：
+- 对应程序执行位置
+    - `PC
+- 对应上下文的保存
+    - `BP`
+    - `SB`
+    - 一些通用的寄存器，存起来肯定最安全。golang更多是通过SP的偏移量来获取参数，且初始化时已知栈帧大小/参数大小，由此推导其他参数，故go源码中只存了`PC`、`BP` 、`SB`。[更多可见](https://eli.thegreenplace.net/2011/09/06/stack-frame-layout-on-x86-64runtime/stack.gov)
 
 ## 切换
 goroutine上下文状态保存在g的数据结构中， 见[runtime/runtime2.go](https://github.com/golang/go/blob/release-branch.go1.11/src/runtime/runtime2.go#L338)
@@ -480,10 +507,10 @@ type gobuf struct {
 保存当前G协程的上下文
 ```
 ...
-MOVQ	SI, (g_sched+gobuf_pc)(AX)
-MOVQ	SP, (g_sched+gobuf_sp)(AX)
+MOVQ	SI, (g_sched+gobuf_pc)(AX)  // gobuf.pc
+MOVQ	SP, (g_sched+gobuf_sp)(AX)  // gobuf.sp
 MOVQ	AX, (g_sched+gobuf_g)(AX)
-MOVQ	BP, (g_sched+gobuf_bp)(AX)
+MOVQ	BP, (g_sched+gobuf_bp)(AX)  // gobuf.bp
 ...
 ```
 恢复一个G协程然后执行：
