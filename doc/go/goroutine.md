@@ -159,13 +159,14 @@ go的调度特点是每个协程G都是与M、P解耦的，可以被调度到其
     - 新建或唤醒M的时候
     - 停止一个goroutine(如goroutine执行完毕/gopark/gosched等)的时候
 - 基本策略 [detail](https://github.com/golang/go/blob/release-branch.go1.11/src/runtime/proc.go#L2557)
-    - 调度函数会在当前线程M的P本地队列、全局G队列、GC的G(没错GC也会通过goroutine并行)、网络poll、其他P的本地队列中获取可以执行的G。详细如下：
+    - 调度函数会在当前线程M的P本地队列、全局G队列、GC的G(没错GC也会通过goroutine并行)、网络poll、其他P的本地队列中等等获取可以执行的G。列举一些如下：
         - 优先执行GC的G
         - 全局调度次数每满61次，就去全局goroutine队列获取(一般情况下每次goroutine执行时会次数加一)
         - 在当前M的P中的队列中获取
         - 全局队列
         - 检查netpoll获取
         - **work steal** 去其他p的队列中偷G，每次偷一半 (这是一个比较著名的策略，[更多可读](http://supertech.csail.mit.edu/papers/steal.pdf))
+        - 所有P的本地队列
     - 如果没有可用的g，接触p与m的联系，休眠M，下次被唤醒时重新搜索可用G
     - 为了保障随时有可用的M来执行G，每次调度都需要判断是否新建/唤醒一个M [detail](https://github.com/golang/go/blob/release-branch.go1.11/src/runtime/proc.go#L50)
     - 调度过程中，如果满足[**spinning M数量的两倍不小于正在工作的p数量**](https://github.com/golang/go/blob/release-branch.go1.11/src/runtime/proc.go#L2337)会认为资源紧张从而终止该次调度休眠M 
