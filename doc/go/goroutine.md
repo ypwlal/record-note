@@ -1,7 +1,7 @@
 ## go协程
 
 * 基于go 1.11源码
-* go还很年轻，变化得也很快，学习go的协程实现虽基于源码但不宜深陷源码（细节非常多），指不定哪天实现就重构了一遍 ~~笑~~。当然源码蕴含的宝藏很多。只是本篇尽量不做源码复读机。
+* go还很年轻，变化得也很快，学习go的协程实现基于源码，但不宜深陷源码（细节非常多），指不定哪天实现就被优化重构掉了 ~~笑~~。当然源码蕴含的宝藏很多。只是本篇尽量不做源码复读机。
 * go本身也提供了调试工具链如`go tool compile`、`go tool objdump`、`go run -gcflags "all=-N -l"`等。
 
 # 协程与go协程
@@ -159,7 +159,8 @@ go的调度特点是每个协程G都是与M、P解耦的，可以被调度到其
     - 新建或唤醒M的时候
     - 停止一个goroutine(如goroutine执行完毕/gopark/gosched等)的时候
 - 基本策略 [detail](https://github.com/golang/go/blob/release-branch.go1.11/src/runtime/proc.go#L2557)
-    - 调度函数会在当前线程M的P本地队列、全局G队列、GC的G(没错GC也会通过goroutine并行)、网络poll、其他P的本地队列中等等获取可以执行的G。列举一些如下：
+    - 调度函数会在当前线程M的P本地队列、全局G队列、GC的G(没错GC也会通过goroutine并行)、网络poll、其他P的本地队列中等等获取可以执行的G。
+    **这部分细节比较多稍微了解下就好，感兴趣直接看源码** ~~指不定下个版本就改了~~，列举一些如下：
         - 优先执行GC的G
         - 全局调度次数每满61次，就去全局goroutine队列获取(一般情况下每次goroutine执行时会次数加一)
         - 在当前M的P中的队列中获取
@@ -289,7 +290,7 @@ func add(a, b int) int {
 }
 ```
 转换成汇编代码
-最左侧的`0x0000 00000`就是指令地址，`MOVQ	$0, "".~r2+24(SP)`是指令。
+最左侧的`0x0000 00000`就是当前指令地址的偏移量，`MOVQ	$0, "".~r2+24(SP)`是指令。
 ```
 "".add STEXT nosplit size=25 args=0x18 locals=0x0
 	0x0000 00000 (hello.go:147)	TEXT	"".add(SB), NOSPLIT, $0-24 // 栈空间为0
@@ -486,6 +487,7 @@ func main() {
     - `BP`
     - `SP`
     - 一些通用的寄存器，存起来肯定最安全。golang更多是通过SP的偏移量来获取参数，且初始化时已知栈帧大小/参数大小，由此推导其他参数，故go源码中只存了`PC`、`BP` 、`SP`。[更多可见](https://eli.thegreenplace.net/2011/09/06/stack-frame-layout-on-x86-64runtime/stack.gov)
+    - 额外一些需要存储数据，如`ret`保存可能用到的值，`ctxt`扩容/gc相关
 
 ## 切换
 goroutine上下文状态保存在g的数据结构中， 见[runtime/runtime2.go](https://github.com/golang/go/blob/release-branch.go1.11/src/runtime/runtime2.go#L338)
@@ -502,6 +504,8 @@ type gobuf struct {
     pc   uintptr
     lr   uintptr // 用于arm平台
     bp   uintptr
+    ret  sys.Uintreg // 如果有用到的值
+    ctxt unsafe.Pointer // stack计算/gc相关
     ...
 }
 ```
