@@ -26,7 +26,7 @@ doOtherthings()        // 紧接着执行
 
 可以对比看出同步模式写起来逻辑最清晰但是切换成本高，异步模式性能好但是控制流不够直观清晰，callback hell了解一下。
 
-有没有其他既有异步的高性能又有同步的优雅呢？目前给出了一个答案是协程。
+有没有其他既有异步的高性能又有同步的优雅呢？有一个答案叫协程。
 
 它可以理解为用户态的线程，系统层面并不会感知到协程，协程的调度切换由程序自己控制。
 
@@ -64,9 +64,11 @@ go的协程是M:N, 即M条线程对应N个协程(由调度器分配，对使用�
 ## MPG模型
 - M - Machine，在go里面相当于真实的线程
 - G - goroutine，go里面的协程单位
-- P - Processor，存放goroutine运行所需的资源，一般情况下M必须通过P来获取执行goroutine
+- P - Processor，存放goroutine运行所需的资源，M必须通过P来获取执行goroutine
 
 详情参见源码([runtime/runtime2.go](https://github.com/golang/go/blob/release-branch.go1.11/src/runtime/runtime2.go#L338))中它们的定义。
+
+![MPG](./MPG.png)
 
 一个大致的图
 
@@ -257,7 +259,7 @@ func addTest() int {
 ```
 第二个例子，抢占失效
 ```
-func addTest2() int {
+func addTest() int {
     fmt.Println("addTest2")
     a := 1
     b := 2
@@ -430,7 +432,7 @@ stackguard1 uintptr // 用在c中的栈帧阈值
 
 ### 汇编 实现协程的工具
 
-现在我们知道所需的几个寄存器，那么从哪里去读取和操作CPU的寄存器呢？答案是通过 **汇编**。
+现在我们知道所需的几个寄存器，那么从哪里去读取和操作CPU的寄存器呢？答案是通过更接近底层的 **汇编**。
 
 汇编代码其实就是操作栈和寄存器的过程，在汇编代码中我们可以直接访问到CPU的寄存器。**这是实现协程的手段**。
 
@@ -524,7 +526,10 @@ func main() {
     - 一些通用的寄存器，存起来肯定最安全。golang更多是通过SP的偏移量来获取参数，且初始化时已知栈帧大小/参数大小，由此推导其他参数，故go源码中只存了`PC`、`BP` 、`SP`。[更多可见](https://eli.thegreenplace.net/2011/09/06/stack-frame-layout-on-x86-64runtime/stack.gov)
     - 额外一些需要存储数据，如`ret`保存可能用到的值，`ctxt`扩容/gc相关
 
+意义：针对特定平台/先进指令集的优化
+
 ## 切换
+
 goroutine上下文状态保存在g的数据结构中， 见[runtime/runtime2.go](https://github.com/golang/go/blob/release-branch.go1.11/src/runtime/runtime2.go#L338)
 
 ```
