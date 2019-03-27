@@ -75,6 +75,7 @@ go的协程是M:N, 即M条线程对应N个协程(由调度器分配，对使用�
 简单说明：
 * G 即是我们说的goroutine协程，通过`go fn()`来生成。通过调度策略供M执行。
     * g0除外，g0是每个M新建时构造的，用于调度、调整栈大小等。
+    * 除了g0外，一个辅助GC的goroutine、一个指向runtime.main(最终会启动我们熟悉的main.main)的goroutine会被依次创建。
 * M 对应的是真实的线程，它通过P来执行goroutine(G)，与P和G解耦，通过调度策略获取P和G。这也是go协程可以做到M对N的基础。
     * M不会无限创建，目前通过简单的判断当前系统压力大的话不会继续创建M，依赖M的spinning状态
 * P 维护了一个本地G队列，M通过P依次获取G来执行，执行完成的G会放入本地的gfree队列供后续复用。
@@ -88,7 +89,25 @@ go的协程是M:N, 即M条线程对应N个协程(由调度器分配，对使用�
 
 
 ## `go fn()发生了什么`
-`go fn()` 会新建一个go协程，构造它的栈/运行上下文/执行函数，放入P的本地队列等待被M执行。若队列已满则取当前队列的一半丢进全局队列，同时检查是否需要唤醒/新建一个线程去调度。**fn不会马上被执行**([runtime.newproc](https://github.com/golang/go/blob/release-branch.go1.11/src/runtime/proc.go#L3307))
+`go fn()` 会新建一个go协程，构造它的栈/运行上下文/执行函数，放入P的下一个执行位置或者本地队列等待被M执行。若队列已满则取当前队列的一半丢进全局队列，同时检查是否需要唤醒/新建一个线程去调度。**fn不会马上被执行**([runtime.newproc](https://github.com/golang/go/blob/release-branch.go1.11/src/runtime/proc.go#L3307))
+
+G入队顺序如下示意：
+![P&G](./P&G.png)
+
+理想简单的场景：
+```
+func main() {
+    ...
+    runtime.GOMAXPROCS(1)
+    go printInt(1)
+    go printInt(2)
+    go printInt(3)
+    go printInt(4)
+    ...
+}
+// 输出结果为：4 1 2 3
+```
+* **实际环境下不一定会有这种顺序结果，因为实际环境下是多个M和P协作，还可能有各种抢占，不能依此作判断，这里只是做一个入队执行顺序说明。**
 
 ## goroutine什么时候让出控制权
 
@@ -184,7 +203,9 @@ go的调度特点是每个协程G都是与M、P解耦的，可以被调度到其
 
 每一条线程每个时刻只能执行一个协程，如果一个协程长时间执行，当前的线程就无法执行调度函数，那就谈不上切换，资源被某个协程一直占用，导致协作失败。所以需要补充一个抢占的机制，来把控制权抢过来供其他协程使用。
 
-显然，抢占需要一条新的线程。
+sysmon抢占示意图
+
+![sysmon](./sysmon.png)
 
 * 程序开始时会新建一个线程去执行函数[sysmon](https://github.com/golang/go/blob/release-branch.go1.11/src/runtime/proc.go#L4320)，它会定时做强制gc、**抢占**、netpoll等工作
     * 抢占
@@ -196,66 +217,79 @@ go的调度特点是每个协程G都是与M、P解耦的，可以被调度到其
             * **PS: 个人觉得这种抢占策略并不完美有隐患，见下面的例子**
     * netpoll
         * 获取netpoll中非block的G列表(全局查询间隔时间不超过10ms)，放入全局G队列
+* 并非只有sysmon才会抢占，STW(stop the world)也会抢占所有P
 
 <details>
-<summary>两个例子说明抢占机制</summary>
+<summary>三个例子说明抢占机制</summary>
+
+先说结论： sysmon抢占仅仅是为G添加一个标识，只有当拥有抢占标识的G执行一个 **需要检查栈空间** 的函数时才会触发中断，抢占成功。
 
 以下例子要用`go run -gcflags "all=-N -l"`禁止内联和优化
 
 可以通过`go tool compile -N -l -S test.go > test.asm`查看汇编代码
 
+改变`addTest`函数观察抢占效果
 ```
-func addTest(a, b, c int) int {
-	for {
-		add2(a, b) // add2函数不会有栈空间的检查，故尽管add标示了需要抢占，但是不会来到抢占的步骤
-	}
-	return a + b + c
+func h(a int) {
+    fmt.Println("h: ", a)
 }
 
-func addTest2(a, b, c int) int {
-	for {
-		add3(a, b) // add3函数有栈空间的检查，会触发抢占把运行中断并放入全局队列
-	}
-	return a + b + c
+func main() {
+    runtime.GOMAXPROCS(1) // 只有一个P，单线程执行
+    var wg sync.WaitGroup
+    wg.Add(1)
+    go h(4)               // 观察h是否会抢到执行 
+    go addTest()          // 用循环长时间占用线程
+    wg.Wait()
+}
+```
+第一个例子，抢占失效
+```
+func addTest() int {
+    fmt.Println("addTest1")
+    a := 1
+    b := 2
+    for {
+        a += b
+    }
+    return a + b
+}
+```
+第二个例子，抢占失效
+```
+func addTest2() int {
+    fmt.Println("addTest2")
+    a := 1
+    b := 2
+    for {
+        add2(a, b) // add2函数不会有栈空间的检查，故尽管add标示了需要抢占，但是不会来到抢占的步骤
+    }
+    return a + b
 }
 
 func add2(a, b int) int {
     d := a + b
     return d
 }
+```
+第三个例子，抢占成功
+```
+func noop() {}
+
+func addTest() int {
+    fmt.Println("addTest3")
+    a := 1
+    b := 2
+    for {
+        add3(a, b) // add3函数有栈空间的检查，会触发抢占把运行中断并放入全局队列
+    }
+    return a + b
+}
 
 func add3(a, b int) int { // 此函数会添加栈空间的检查
     noop()
     d := a + b
     return d
-}
-
-func h() {
-    fmt.Println(1)
-}
-
-func noop() {}
-
-// 这个例子不会执行h
-func main() {
-    runtime.GOMAXPROCS(1) // 设置全局只有一个P，所有goroutine只会运行在该M，即单线程执行
-	a := 2
-	b := 3
-	c := 4
-	go h()            // h不会执行
-	d := addTest(a, b, c) // block住，抢占无效
-	fmt.Println(d)
-}
-
-// 这个例子会执行h
-func main() {
-    runtime.GOMAXPROCS(1)
-	a := 2
-	b := 3
-	c := 4
-	go h()            // 抢占有效，h会执行
-	d := addTest2(a, b, c)
-	fmt.Println(d)
 }
 ```
 
@@ -308,8 +342,9 @@ func add(a, b int) int {
 
 **协程的重点就是保存PC（记录程序中断的地方）和恢复PC（回到中断的地方继续执行）**
 
-* CPU通过`PC`(Program Counter)寄存器保存当前指令地址，通过`JMP`、`RET`、`CALL`等指令改变PC，实现流程控制
+* CPU通过`PC`(Program Counter)寄存器保存下一条指令地址，通过`JMP`、`RET`、`CALL`等指令改变PC，实现流程控制
 * CPU的关键寄存器大致有基准寄存器`BP`（指向栈底）、栈顶寄存器`SP`（指向栈顶）、通用寄存器（储存临时变量等）
+* golang里`PC`寄存器的获取可以通过底层方法`getcallerpc`或者通过`SP`偏移量算出caller的pc。
 
 ### 栈空间
 
@@ -401,7 +436,7 @@ stackguard1 uintptr // 用在c中的栈帧阈值
 
 golang的汇编器采用的是基于plan9
 
-汇编是仅次于机器码贴近底层的存在，不具备跨平台性，每个平台/架构的汇编代码都是不一样的。本文对应的是amd64，golang项目中根据CPU架构命名文件，如`sys_x86.go`、[`asm_amd64.s`](https://github.com/golang/go/blob/release-branch.go1.11/src/runtime/asm_amd64.s)等
+汇编是仅次于机器码贴近底层的存在，不具备跨平台性，每个平台/架构的汇编代码都是不一样的。本文对应的是darwin(mac) + amd64，golang项目中根据CPU架构/系统等命名文件，如`sys_linux_amd64.s`、[`asm_amd64.s`](https://github.com/golang/go/blob/release-branch.go1.11/src/runtime/asm_amd64.s)等
 
 
 golang asm reference:
@@ -536,7 +571,7 @@ MOVQ	$0, gobuf_ret(BX)
 MOVQ	$0, gobuf_ctxt(BX)
 MOVQ	$0, gobuf_bp(BX)
 MOVQ	gobuf_pc(BX), BX
-JMP	BX                     // CPU跳转到上次的指令位置，继续上次的位置执行
+JMP	BX                     // CPU跳转到指定的指令位置，继续上次的中断执行
 ```
 
 PC和SP经常会由程序定制，如调度执行g的时候会把`goexit`设置为SP的值，使得G执行完进入exit环节。
